@@ -526,6 +526,22 @@ function git { # override default git command by changing default 'git commit' f
     fi
 }
 
+function help-create-venv { #@dont-show
+    echo ""
+    echo "Create an virtualenv in current directory"
+    echo ""
+    echo "Usage:"
+    echo "  create-venv [--options]"
+    echo ""
+    echo "Options:"
+    echo "  --venv-name             Name of the virtualenv"
+    echo "  --python-version        Python version to use in virtualenv"
+    echo ""
+    echo "Note:"
+    echo "  All options available in 'virtualenv' are also available here"
+    echo ""
+}
+
 function install-dependencies { # install dependencies used by other functions @dont-show
     echo "Installing 'wslu'"
     sudo apt-get install wslu -y > /dev/null
