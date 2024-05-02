@@ -1,0 +1,19 @@
+[user]
+	email = contato@marcosmartins.me
+	name = Marcos Martins
+[credential]
+	helper = store
+[init]
+	defaultBranch = main
+[push]
+	autoSetupRemote = true
+[core]
+	editor = micro
+[rerere]
+	enabled = true
+[column]
+	ui = auto
+[branch]
+	sort = -committerdate
+[rebase]
+	updateRefs = true

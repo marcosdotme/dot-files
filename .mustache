@@ -1,0 +1,54 @@
+{{! @marcosDotme Docstring Template }}
+{{=<% %>=}}
+[description]
+
+<%extendedSummaryPlaceholder%>
+<%#argsExist%>
+
+
+Arguments
+---------
+<%#args%>
+    <%var%> `<%type%>`: [description]
+<%/args%>
+<%/argsExist%>
+<%#kwargsExist%>
+
+
+Keyword Arguments
+-----------------
+<%#kwargs%>
+    <%var%> `<%type%>`: [description] (default: <%&default%>)
+<%/kwargs%>
+<%/kwargsExist%>
+<%#exceptionsExist%>
+
+
+Raises
+------
+<%#exceptions%>
+    `<%type%>`: [description]
+<%/exceptions%>
+<%/exceptionsExist%>
+<%#returnsExist%>
+
+
+Returns
+-------
+<%#returns%>
+    `<%type%>`: [description]
+<%/returns%>
+<%/returnsExist%>
+<%#yieldsExist%>
+
+
+Yields
+------
+<%#yields%>
+    `<%type%>`: [description]
+<%/yields%>
+<%/yieldsExist%>
+
+Example usage
+-------------
+>>> <%name%>()
