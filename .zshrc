@@ -137,26 +137,122 @@ function checkout { # checkout to specified branch
     command git checkout "$@"
 }
 
+function confirm { # prompts for user confirmation [y/n]
+    local prompt="$1"
+    local response
+
+    # Print the prompt and options
+    echo -n "$prompt [y/n]: "
+
+    # Read the user's response
+    read -r response
+
+    case $response in
+        [Yy]) return 0 ;;
+        [Nn]) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+function copy-file { # copy content of a file to clipboard
+    if ! command -v xclip >/dev/null 2>&1; then
+        echo "Installing 'xclip'"
+        sudo apt-get install xclip -y > /dev/null
+    fi
+
+    xclip -selection clipboard -i "$1"
+}
+
 function clear-swap { # clear swap if has available RAM
-	free_data="$(free)"
-	mem_data="$(echo "$free_data" | grep 'Mem:')"
-	free_mem="$(echo "$mem_data" | awk '{print $4}')"
-	buffers="$(echo "$mem_data" | awk '{print $6}')"
-	cache="$(echo "$mem_data" | awk '{print $7}')"
-	total_free=$((free_mem + buffers + cache))
-	used_swap="$(echo "$free_data" | grep 'Swap:' | awk '{print $3}')"
-	
-	echo -e "Free memory:\t$total_free kB ($((total_free / 1024)) MB)\nUsed swap:\t$used_swap kB ($((used_swap / 1024)) MB)"
-	if [[ $used_swap -eq 0 ]]; then
-	    echo "Congratulations! No swap is in use."
-	elif [[ $used_swap -lt $total_free ]]; then
-	    echo "Freeing swap..."
-	    sudo swapoff -a
-	    sudo swapon -a
-	else
-	    echo "Not enough free memory. Exiting."
-	    exit 1
-	fi
+    free_data="$(free)"
+    mem_data="$(echo "$free_data" | grep 'Mem:')"
+    free_mem="$(echo "$mem_data" | awk '{print $4}')"
+    buffers="$(echo "$mem_data" | awk '{print $6}')"
+    cache="$(echo "$mem_data" | awk '{print $7}')"
+    total_free=$((free_mem + buffers + cache))
+    used_swap="$(echo "$free_data" | grep 'Swap:' | awk '{print $3}')"
+    
+    echo -e "Free memory:\t$total_free kB ($((total_free / 1024)) MB)\nUsed swap:\t$used_swap kB ($((used_swap / 1024)) MB)"
+    if [[ $used_swap -eq 0 ]]; then
+        echo "Congratulations! No swap is in use."
+    elif [[ $used_swap -lt $total_free ]]; then
+        echo "Freeing swap..."
+        sudo swapoff -a
+        sudo swapon -a
+    else
+        echo "Not enough free memory. Exiting."
+        exit 1
+    fi
+}
+
+function help-create-venv { #@dont-show
+    echo ""
+    echo "Create an virtualenv in current directory"
+    echo ""
+    echo "Usage:"
+    echo "  create-venv [--options]"
+    echo ""
+    echo "Options:"
+    echo "  --venv-name             Name of the virtualenv"
+    echo "  --python-version        Python version to use in virtualenv"
+    echo "  --pip                   Pip version to use in virtualenv"
+    echo ""
+    echo "Note:"
+    echo "  All options available in 'virtualenv' are also available here"
+    echo ""
+}
+
+function create-venv { # create an virtualenv in current directory
+    has_venv_in_current_folder=$(find . -maxdepth 1 -type d -name '*venv*')
+
+    if [[ -n "$has_venv_in_current_folder" ]]; then
+        echo "Already venv in current folder!"
+        return 0
+    fi
+
+    current_folder_name="${PWD##*/}"
+    default_python_version=$(default-python-version)
+    pip="23.0.1"
+
+    venv_name="${current_folder_name}"
+    python_version="${default_python_version}"
+    virtualenv_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--venv-name)
+                venv_name="$2"
+                shift 2
+                ;;
+            -v|--python-version)
+                python_version="$2"
+                shift 2
+                ;;
+            -p|--pip)
+                pip="$2"
+                shift 2
+                ;;
+            -h|--help)
+                help-create-venv
+                return 0
+                ;;
+            *)
+                virtualenv_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    venv_name=$(echo "$venv_name" | tr - _)
+    python_version=$(echo "$python_version" | awk -F'.' '{print $1"."$2}')
+
+    if [[ "$venv_name" != "$current_folder_name" ]]; then
+        venv_full_name="${venv_name}_py${python_version}"
+    else
+        venv_full_name="venv_${venv_name}_py${python_version}"
+    fi
+
+    virtualenv "$venv_full_name" --python="$python_version" --pip="$pip" "${virtualenv_args[@]}"
 }
 
 function confirm { # prompts for user confirmation [y/n] #@dont-show
@@ -359,9 +455,13 @@ function def { # output the function definition
     echo -e
 }
 
-function delete-branches { # delete local branches except for 'main', 'master' AND any specified branches
+function default-python-version { # list the default python3 version
+    python3 --version | grep -oP "\d+\.\d+(?:\.\d+)?"
+}
+
+function delete-branches { # delete local branches except for 'main', 'master', 'beta' AND any specified branches
     current_branch="$(command git rev-parse --abbrev-ref HEAD)"
-    protected_branches=("master" "main")
+    protected_branches=("master" "main" "beta")
     branches_to_keep=("$@")
 
     all_branches_to_keep=("${current_branch[@]}" "${protected_branches[@]}" "${branches_to_keep[@]}")
@@ -501,15 +601,15 @@ function git { # override default git command by changing default 'git commit' f
     fi
 
     elif [[ "$1" == "add" ]]; then
-		command git add --intent-to-add "${@:2}"
+        command git add --intent-to-add "${@:2}"
         command git add --patch "${@:2}"
 
-	elif [[ "$1" == "status" ]]; then
-		command git status
+    elif [[ "$1" == "status" ]]; then
+        command git status
 
         if [ "$(command git --no-pager stash list | wc -w)" -gt 0 ]; then
             echo
-		    command git --no-pager stash list
+            command git --no-pager stash list
         fi
 
     elif [[ "$1" == "push" ]]; then
@@ -666,6 +766,36 @@ function make-gif { # create an .gif using 'ffmpeg' based on a video file
     ffmpeg -hide_banner -loglevel warning -i "$input_file" -r 10 -filter_complex "[0:v] split [a][b];[a] palettegen [p];[b][p] paletteuse" -f gif - | gifsicle -O3 --lossy=100 > "$output_file"
 }
 
+function months-of { # list how many days each month has
+    local year=$1
+
+    # Validate the input year
+    if ! [[ "$year" =~ ^[0-9]{4}$ ]]; then
+        echo "Please provide a valid year (e.g., 2023)."
+        return 1
+    fi
+
+    # Determine if it's a leap year
+    local leap_year=false
+    if (( (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) )); then
+        leap_year=true
+    fi
+
+    # Arrays for months and days
+    months=("January" "February" "March" "April" "May" "June" "July" "August" "September" "October" "November" "December")
+    days=(31 28 31 30 31 30 31 31 30 31 30 31)
+
+    # Adjust February for leap year
+    if $leap_year; then
+        days[2]=29
+    fi
+
+    # Display the days in each month
+    for i in $(seq 1 12); do
+        echo "($i) ${months[$i]}: ${days[$i]} days"
+    done
+}
+
 function open-repo { # open the current repository in web browser
     is_linux_native=$(is-linux-native)
     repo_remote_url=$(command git remote get-url origin)
@@ -683,7 +813,7 @@ function open-repo { # open the current repository in web browser
     fi
 }
 
-function pandas-df { # generate an python script with an sample pandas dataframe
+function pandas-df { # generate a sample pandas dataframe
     if ! command -v xclip >/dev/null 2>&1; then
         echo "Installing 'xclip'"
         sudo apt-get install xclip -y > /dev/null
@@ -707,9 +837,11 @@ data = {
 df = pandas.DataFrame(data)' | xclip -selection clipboard
 }
 
-function quick-test { # create an temp python file to test things fast
-    mkdir -p /tmp/quick-test/
-    touch /tmp/quick-test/main.py && code --new-window /tmp/quick-test/
+function quick-test { # quickly open a temp dir to test scripts
+    TMP_DIR="/home/marcosmartins/tmp"
+
+    mkdir -p "$TMP_DIR"
+    touch "$TMP_DIR/main.py" && code --new-window "$TMP_DIR"
 }
 
 function reorder-imports { # reorder python imports in specified file
@@ -732,6 +864,11 @@ function reorder-imports { # reorder python imports in specified file
     PYTHONPATH="$ORIGINAL_PYTHONPATH"
 }
 
+function take { # create and change to directory
+    mkdir -p "$1"
+    cd "$1" || return 1
+}
+
 function show-pull-requests-changes { # show pull requests changes locally
     origin_branch=${1}
     feature_branch=${2}
@@ -746,7 +883,7 @@ function start-airflow { # start Airflow locally
     open http://localhost:8080/home > /dev/null 2>&1
 }
 
-function stop-airflow { # stop Airflow locally
+function stop-airflow { # stop locally Airflow
     docker stop $(docker ps -f "name=^airflow*" -q)
 }
 
@@ -774,4 +911,26 @@ alias zshrc='micro ~/.zshrc' # shortcut for 'micro ~/.zshrc'
 export PATH=$PATH:/usr/local/bin
 export PATH=$PATH:$HOME/.local/bin
 export PATH=$PATH:$HOME/bin
+export PATH=$PATH:$HOME/.cargo/bin
+export PATH=$PATH:/usr/local/go/bin
 export OH_MY_ZSH="$HOME/.oh-my-zsh"
+export MICRO_TRUECOLOR=1
+
+export SPARK_HOME=/opt/spark
+export PYSPARK_PYTHON=/usr/bin/python3.7
+export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.7
+export HADOOP_HOME=/opt/hadoop
+export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+export PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9-src.zip
+export PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9-src.zip:/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9-src.zip
+export PATH=$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/bin:/sbin:/opt/hadoop/bin:/opt/hadoop/sbin:/opt/hadoop/bin:/opt/hadoop/sbin:/home/marcosmartins/.local/bin
+export PATH=$PATH:/home/marcosmartins/rio/target/release
+export PATH=$PATH:$HOME/.pyenv/bin
+export PATH=$PATH:$HOME/.pyenv/versions/3.6.15/bin
+export PATH=$PATH:$HOME/.dotnet/tools
+export PATH=$PATH:/usr/share/code
+export PATH=$PATH:$HOME/.local/pipx/venvs/pygments/bin
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
