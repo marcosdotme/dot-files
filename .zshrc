@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
@@ -5,7 +7,8 @@
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
-ZSH_THEME="bira"
+
+ZSH_THEME="aphrodite"
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
@@ -109,10 +112,10 @@ function activate-venv { # activate the virtualenv in the current directory if e
 
     if [[ -n "$venv" ]]; then
         . "$venv/bin/activate"
-        return 1
+        return 0
     else
         echo "No venv found!"
-        return 0
+        return 1
     fi
 }
 
@@ -255,32 +258,6 @@ function create-venv { # create an virtualenv in current directory
     virtualenv "$venv_full_name" --python="$python_version" --pip="$pip" "${virtualenv_args[@]}"
 }
 
-function confirm { # prompts for user confirmation [y/n] #@dont-show
-    local prompt="$1"
-    local response
-
-    # Print the prompt and options
-    echo -n "$prompt [y/n]: "
-
-    # Read the user's response
-    read -r response
-
-    case $response in
-        [Yy]) return 0 ;;
-        [Nn]) return 1 ;;
-        *) return 2 ;;
-    esac
-}
-
-function copy-file { # copy content of a file to clipboard
-    if ! command -v xclip >/dev/null 2>&1; then
-        echo "Installing 'xclip'"
-        sudo apt-get install xclip -y > /dev/null
-    fi
-
-    xclip -selection clipboard -i "$1"
-}
-
 function create-lambda-layer { # create AWS lambda layer from current directory
     venv=$(find . -maxdepth 1 -type d -name '*venv*')
     requirements=$(find . -maxdepth 1 -type f -name 'requirements.txt')
@@ -371,72 +348,26 @@ function create-lambda-zip { # create AWS lambda zip from current directory
     fi
 }
 
-function create-venv { # create an virtualenv in current directory
-    has_venv_in_current_folder=$(find . -maxdepth 1 -type d -name '*venv*')
-    current_folder_name="${PWD##*/}"
-    default_python_version=$(default-python-version)
-
-    venv_name="${current_folder_name}"
-    python_version="${default_python_version}"
-    virtualenv_args=()
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -n|--venv-name)
-                venv_name="$2"
-                shift 2
-                ;;
-            -v|--python-version)
-                python_version="$2"
-                shift 2
-                ;;
-            -h|--help)
-                help-create-venv
-                return 0
-                ;;
-            *)
-                virtualenv_args+=("$1")
-                shift
-                ;;
-        esac
-    done
-
-    venv_name=$(echo "$venv_name" | tr - _)
-    python_version=$(echo "$python_version" | grep -oP "\d.*")
-    venv_full_name="venv_${venv_name}_py${python_version}"
-
-    if [[ -n "$has_venv_in_current_folder" ]]; then
-        echo "Already venv in current folder!"
-        return 0
-    else
-        virtualenv "$venv_full_name" --python="$python_version" "${virtualenv_args[@]}"
-    fi
-}
-
 function deactivate-venv { # deactivate the virtualenv in the current directory if exists
     venv=$(find . -maxdepth 1 -type d -name '*venv*')
 
     if [[ -z "$VIRTUAL_ENV" ]]; then
         echo "Venv already deactivated!"
-        return 1
+        return 0
 
     elif [[ -n "$VIRTUAL_ENV" ]]; then
         deactivate
-        return 1
+        return 0
 
     elif ! deactivate >/dev/null 2>&1; then
         echo "Not inside venv."
-        return 0
+        return 1
 
     elif [[ -z "$venv" ]]; then
         echo "No venv found!"
-        return 0
+        return 1
 
     fi
-}
-
-function default-python-version { # list the default python3 version
-    python3 --version | grep -oP "\d+\.\d+(?:\.\d+)?"
 }
 
 function def { # output the function definition
@@ -451,11 +382,12 @@ function def { # output the function definition
     fi
 
     echo -e
-    echo -e "${function_def}" | pygmentize -l sh -P style=dracula_refined
+    printf '%s\n' "$function_def" | pygmentize -l sh -P style=dracula_refined
     echo -e
 }
 
 function default-python-version { # list the default python3 version
+    deactivate-venv >/dev/null 2>&1
     python3 --version | grep -oP "\d+\.\d+(?:\.\d+)?"
 }
 
@@ -474,15 +406,42 @@ function delete-branches { # delete local branches except for 'main', 'master', 
     done
 }
 
-function gdrive { # mount google drive using rclone
-    # TODO: implement 'mount all' and 'unmount all'
-
-    if [[ "$1" == mount ]]; then
-        gdrive-mount "$2"
-
-    elif [[ "$1" == unmount ]]; then
-        gdrive-unmount "$2"
+function ffprobe {
+    if [[ ! -f "$1" ]]; then
+        echo "ERROR: file '$1' dont exists"
+        return 1
     fi
+
+    is_valid_file=$(command ffprobe -v quiet -print_format json -show_format -show_streams -i "$1" | xargs)
+    if [[ "$is_valid_file" == "{ }" ]]; then
+        echo "ERROR: '$1' is not a valid file"
+        return 1
+    fi
+
+    if [[ -z "$2" ]]; then
+        echo "executing custom"
+        command ffprobe -v quiet -print_format json -show_format -show_streams -i "$1"
+    else
+        echo "executing default"
+        command ffprobe "$@"
+    fi
+}
+
+function freeze { # pip freeze only the packages installed by the user inside the virtualenv
+    if [ -z "$VIRTUAL_ENV" ]; then
+        echo "ERROR: Could not find an activated virtualenv"
+        return 1
+    fi
+
+    if ! command -v pip >/dev/null 2>&1; then
+        echo "ERROR: Could not find pip installed"
+        return 1
+    fi
+
+    output_file=${1-"requirements.txt"}
+    manual_installed_packages=$(pip list --local --not-required --format=freeze --disable-pip-version-check | grep -v -e pip -e wheel -e setuptools)
+
+    echo "$manual_installed_packages" > "$output_file"
 }
 
 function gdrive-mount { #@dont-show
@@ -512,6 +471,17 @@ function gdrive-unmount { #@dont-show
     fi
 }
 
+function gdrive { # mount google drive using rclone
+    # TODO: implement 'mount all' and 'unmount all'
+
+    if [[ "$1" == mount ]]; then
+        gdrive-mount "$2"
+
+    elif [[ "$1" == unmount ]]; then
+        gdrive-unmount "$2"
+    fi
+}
+
 function generate-date-range { # generate date range based on start and end date (date format: "YYYY-MM-DD")
     start_date="$1"
     end_date="$2"
@@ -520,57 +490,6 @@ function generate-date-range { # generate date range based on start and end date
         echo "$start_date"
         start_date=$(date -d "$start_date + 1 day" +"%F")
     done
-}
-
-function get-aws-token { # get AWS MFA temp token
-    # Install 'jq' for parse .json files
-    if ! command -v jq >/dev/null 2>&1; then
-        echo "Installing 'jq'..."
-        sudo apt-get install jq
-    fi
-
-    # Identify and export location of shell configuration file
-    if [ -z "$SHELL_CONFIG_FILE" ]; then
-        if [[ "$SHELL" == "/bin/bash" || "$SHELL" == "/usr/bin/bash" ]]; then
-            SHELL_CONFIG_FILE="$HOME/.bashrc"
-        elif [[ "$SHELL" == "/bin/zsh" || "$SHELL" == "/usr/bin/zsh" ]]; then
-            SHELL_CONFIG_FILE="$HOME/.zshrc"
-        fi
-
-        echo "export SHELL_CONFIG_FILE=\"$SHELL_CONFIG_FILE\"" >> "$SHELL_CONFIG_FILE"
-
-    fi
-
-    # Request for the AWS ARN if environment variable AWS_ARN is empty
-    if [ -z "$AWS_ARN" ]; then
-        echo "Insert your AWS ARN (example: arn:aws:iam::123:mfa/personal_device): "
-        read -r aws_arn
-
-        echo "export AWS_ARN=\"$aws_arn\"" >> "$SHELL_CONFIG_FILE"
-    else
-        aws_arn="$AWS_ARN"
-    fi
-
-    # Request the authentication token
-    echo -n "Insert the authenticator token: "
-    read -r auth_token
-
-    aws sts get-session-token \
-        --duration-seconds 129600 \
-        --serial-number "$aws_arn" \
-        --token-code "$auth_token" \
-        > "$HOME/.aws/tmp_mfa_credentials.json"
-
-    # Set the new (and temporary) aws credentials
-    new_aws_access_key_id=$(jq -r '.Credentials.AccessKeyId' "$HOME/.aws/tmp_mfa_credentials.json")
-    new_aws_secret_access_key=$(jq -r '.Credentials.SecretAccessKey' "$HOME/.aws/tmp_mfa_credentials.json")
-    new_aws_session_token=$(jq -r '.Credentials.SessionToken' "$HOME/.aws/tmp_mfa_credentials.json")
-
-    aws configure set aws_access_key_id "$new_aws_access_key_id" --profile "mfa"
-    aws configure set aws_secret_access_key "$new_aws_secret_access_key" --profile "mfa"
-    aws configure set aws_session_token "$new_aws_session_token" --profile "mfa"
-
-    exec "$SHELL"
 }
 
 function git { # override default git command by changing default 'git commit' for 'cz commit'
@@ -626,20 +545,8 @@ function git { # override default git command by changing default 'git commit' f
     fi
 }
 
-function help-create-venv { #@dont-show
-    echo ""
-    echo "Create an virtualenv in current directory"
-    echo ""
-    echo "Usage:"
-    echo "  create-venv [--options]"
-    echo ""
-    echo "Options:"
-    echo "  --venv-name             Name of the virtualenv"
-    echo "  --python-version        Python version to use in virtualenv"
-    echo ""
-    echo "Note:"
-    echo "  All options available in 'virtualenv' are also available here"
-    echo ""
+function history-grep { # searches for term in bash history
+    history | grep "$@" | grep -v grep
 }
 
 function install-dependencies { # install dependencies used by other functions @dont-show
@@ -866,7 +773,7 @@ function reorder-imports { # reorder python imports in specified file
 
 function take { # create and change to directory
     mkdir -p "$1"
-    cd "$1" || return 1
+    cd "$1" || return 0
 }
 
 function show-pull-requests-changes { # show pull requests changes locally
@@ -877,35 +784,122 @@ function show-pull-requests-changes { # show pull requests changes locally
     command git reset "$commit_hash"^
 }
 
-function start-airflow { # start Airflow locally
-    docker compose -f "$HOME/bitbucket-repositories/airflow-local/docker-compose.yaml" up --detach
+function get-aws-token {
+    # Install 'jq' for parse .json files
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "Installing 'jq'..."
+        sudo apt-get install jq
+    fi
+
+    # Identify and export location of shell configuration file
+    if [ -z "$SHELL_CONFIG_FILE" ]; then
+        if [[ "$SHELL" == "/bin/bash" || "$SHELL" == "/usr/bin/bash" ]]; then
+            SHELL_CONFIG_FILE="$HOME/.bashrc"
+        elif [[ "$SHELL" == "/bin/zsh" || "$SHELL" == "/usr/bin/zsh" ]]; then
+            SHELL_CONFIG_FILE="$HOME/.zshrc"
+        fi
+
+        echo "export SHELL_CONFIG_FILE=\"$SHELL_CONFIG_FILE\"" >> "$SHELL_CONFIG_FILE"
+
+    fi
+
+    # Request for the AWS ARN if environment variable AWS_ARN is empty
+    if [ -z "$AWS_ARN" ]; then
+        echo "Insert your AWS ARN (example: arn:aws:iam::123:mfa/personal_device): "
+        read -r aws_arn
+
+        echo "export AWS_ARN=\"$aws_arn\"" >> "$SHELL_CONFIG_FILE"
+    else
+        aws_arn="$AWS_ARN"
+    fi
+
+    # Request the authentication token
+    echo -n "Insert the authenticator token: "
+    read -rs auth_token
+
+    aws sts get-session-token \
+        --duration-seconds 129600 \
+        --serial-number "$aws_arn" \
+        --token-code "$auth_token" \
+        > "$HOME/.aws/tmp_mfa_credentials.json"
+
+    # Set the new (and temporary) aws credentials
+    new_aws_access_key_id=$(jq -r '.Credentials.AccessKeyId' "$HOME/.aws/tmp_mfa_credentials.json")
+    new_aws_secret_access_key=$(jq -r '.Credentials.SecretAccessKey' "$HOME/.aws/tmp_mfa_credentials.json")
+    new_aws_session_token=$(jq -r '.Credentials.SessionToken' "$HOME/.aws/tmp_mfa_credentials.json")
+
+    aws configure set aws_access_key_id "$new_aws_access_key_id" --profile "mfa"
+    aws configure set aws_secret_access_key "$new_aws_secret_access_key" --profile "mfa"
+    aws configure set aws_session_token "$new_aws_session_token" --profile "mfa"
+
+    exec "$SHELL"
+}
+
+function start-airflow { # start locally Airflow using docker
+    CURRENT_PATH=$PWD
+    AIRFLOW_LOCAL_PATH=$HOME/bitbucket-repositories/airflow-local
+
+    cd "$AIRFLOW_LOCAL_PATH" || return
+
+    chmod +x "$AIRFLOW_LOCAL_PATH"/setup.sh
+    "$AIRFLOW_LOCAL_PATH"/setup.sh
+
+    docker compose up --detach --build --force-recreate --no-deps
+
+    echo -n "\nAguardando o Airflow inicializar..."
+        while ! curl -s http://localhost:8080/health > /dev/null; do
+            echo -n "."
+            sleep 2
+        done
 
     open http://localhost:8080/home > /dev/null 2>&1
+
+    cd "$CURRENT_PATH" || return
 }
 
 function stop-airflow { # stop locally Airflow
-    docker stop $(docker ps -f "name=^airflow*" -q)
+    if [ -z "$(docker ps -f "name=^data-airflow-local*" -q)" ]; then
+        echo "Nenhum serviço do Airflow está em execução."
+        return
+    fi
+
+    echo "Parando serviços do Airflow:"
+    for container in $(docker ps -f "name=^data-airflow-local*" --format "{{.Names}}"); do
+        sleep 1
+        echo -n "  → $container..."
+        docker stop $container > /dev/null 2>&1
+        sleep 1
+        echo " OK"
+    done
+    echo "Todos os serviços foram parados com sucesso!"
+    sleep 2
 }
 
-function take { # create and change to directory
-    mkdir -p "$1"
-    cd "$1" || return 1
+# Functions used only at Locaweb
+function vpn { # connect on Locaweb vpn using openvpn
+    # cd "$HOME/openvpn/marcos.martins/" || return 0; sudo openvpn --config marcos.martins.ovpn
+    sudo openvpn --config "$HOME/openvpn/marcos.martins/marcos.martins.ovpn"
 }
-
 
 # Aliases
-alias cp='cp -i' # 'cp' command with flag '-i' for safety copy files and folders
+alias repo='cd $HOME/github-repositories/creators' # change to Wake Creators repositories folder
+alias repo-pessoal='cd $HOME/github-repositories/pessoal' # change to Personal repositories folder
+alias repo-experience='cd $HOME/bitbucket-repositories' # change to Wake Experience repositories folder
 alias gs='git status' # shortcut for 'git status'
+alias update='sudo apt-get update -y & sudo apt-get upgrade -y' # update and upgrade system
+alias ls='ls -lahF --color=auto' # shortcut for 'ls -lahF --color=auto'
 alias la='list-aliases' # shortcut for 'list-aliases' function
 alias lf='list-functions' # shortcut for 'list-functions' function
-alias list-fonts='fc-list : family | sort | uniq' # fc-list : family | sort | uniq
-alias ls='ls -lahF --color=auto' # shortcut for 'ls -lahF --color=auto'
+alias cp='cp -i' # 'cp' command with flag '-i' for safety copy files and folders
 alias mv='mv -i' # 'mv' command with flag '-i' for safety move files and folders
-alias repo='cd $HOME/git-repositories' # change to 'git-repositories' folder
 alias rm='rm -i' # 'rm' command with flag '-i' for safety remove files and folders
-alias update='sudo apt-get update -y & sudo apt-get upgrade -y' # update and upgrade system
 alias zshrc='micro ~/.zshrc' # shortcut for 'micro ~/.zshrc'
-
+alias list-fonts='fc-list : family | sort | uniq' # fc-list : family | sort | uniq
+alias java8='/usr/lib/jvm/java-1.8.0-openjdk-amd64/bin/java'
+alias java11='/usr/lib/jvm/java-1.11.0-openjdk-amd64/bin/java'
+alias cursor='~/Applications/cursor.AppImage --no-sandbox </dev/null &>/dev/null &'
+alias airflow-local='code --new-window $HOME/bitbucket-repositories/airflow-local'
+alias airflow-db='export PGPASSWORD=password; psql -h localhost -p 5432 -U marcos -d record_shop'
 
 # Exports
 export PATH=$PATH:/usr/local/bin
@@ -914,15 +908,21 @@ export PATH=$PATH:$HOME/bin
 export PATH=$PATH:$HOME/.cargo/bin
 export PATH=$PATH:/usr/local/go/bin
 export OH_MY_ZSH="$HOME/.oh-my-zsh"
+export PYPI_TEST_TOKEN=
 export MICRO_TRUECOLOR=1
 
+### ON PREMISE ENV
+export SCALA_HOME=/usr/share/scala
 export SPARK_HOME=/opt/spark
-export PYSPARK_PYTHON=/usr/bin/python3.7
-export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.7
 export HADOOP_HOME=/opt/hadoop
-export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-export PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9-src.zip
-export PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9-src.zip:/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9-src.zip
+export PYSPARK_PYTHON=/usr/bin/python3
+export PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+export JAVA_HOME=/usr/lib/jvm/java-1.11.0-openjdk-amd64
+export PYSPARK_SUBMIT_ARGS="--master local[*] pyspark-shell"
+
+
+export PYTHONPATH=$SPARK_HOME/python:$SPARK_HOME/python/lib/py4j-0.10.9-src.zip:$PYTHONPATH
+export PATH=$SPARK_HOME/bin:$SPARK_HOME/python:$PATH
 export PATH=$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/bin:/sbin:/opt/hadoop/bin:/opt/hadoop/sbin:/opt/hadoop/bin:/opt/hadoop/sbin:/home/marcosmartins/.local/bin
 export PATH=$PATH:/home/marcosmartins/rio/target/release
 export PATH=$PATH:$HOME/.pyenv/bin
@@ -930,6 +930,73 @@ export PATH=$PATH:$HOME/.pyenv/versions/3.6.15/bin
 export PATH=$PATH:$HOME/.dotnet/tools
 export PATH=$PATH:/usr/share/code
 export PATH=$PATH:$HOME/.local/pipx/venvs/pygments/bin
+export PATH=$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/bin:/sbin:/opt/hadoop/bin:/opt/hadoop/sbin:/opt/hadoop/bin:/opt/hadoop/sbin:/home/herbertsantos/.local/bin:/home/herbertsantos/workspace/liquibase
+export PATH=$PATH:/opt/apache-maven/bin
+export PATH=$PATH:$HADOOP_HOME/bin:$SPARK_HOME/bin
+
+export CONSUL_HOST=
+export CONSUL_TOKEN=
+export SHELL_CONFIG_FILE="/home/marcosmartins/.zshrc"
+export AWS_ARN=
+
+export BITBUCKET_USERNAME=
+export BITBUCKET_PASSWORD=
+
+
+function s3-delete {
+    # Script to delete .json files from an S3 bucket
+    # Usage: ./delete_json_files.sh <bucket_name> <optional_folder_path>
+
+    # Check if bucket name is provided
+    if [ -z "$1" ]; then
+      echo "Usage: $0 <bucket_name> <optional_folder_path>"
+    fi
+
+    BUCKET_NAME=$1
+    FOLDER_PATH=$2
+
+    # Confirm deletion
+    echo "This script will delete all .json files from s3://$BUCKET_NAME/$FOLDER_PATH"
+    printf "Are you sure you want to proceed? (yes/no): "
+    read CONFIRMATION
+
+    if [ "$CONFIRMATION" != "yes" ]; then
+      echo "Operation cancelled."
+    fi
+
+    aws s3api list-objects-v2 --profile "service_prod" --bucket "$BUCKET_NAME" --prefix "$FOLDER_PATH" --query 'Contents[?ends_with(Key, `.json`)].Key' --output text | tr '\t' '\n' | while read -r FILE; do
+        echo "Deleting $FILE..."
+        aws s3 rm "s3://$BUCKET_NAME/$FILE" --profile "service_prod"
+    done
+
+    echo "Deletion completed!"
+
+}
+
+function pin {
+    echo "chyy3gbx"
+}
+
+function clean-docker {
+    # Para parar todos os containers
+    docker stop $(docker ps -aq)
+    
+    # Remover todos os containers
+    docker rm $(docker ps -aq)
+    
+    # Remover todas as imagens
+    docker rmi $(docker images -aq)
+    
+    # Remover todos os volumes
+    docker volume rm $(docker volume ls -q)
+    
+    # Remover todas as redes customizadas
+    docker network rm $(docker network ls --filter type=custom -q)
+    
+    # Limpar qualquer cache restante
+    docker system prune --all --volumes --force
+}
+
 
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
